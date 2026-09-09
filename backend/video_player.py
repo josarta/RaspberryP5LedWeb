@@ -162,3 +162,4 @@ class FullscreenVideoPlayer:
         with self.lock:
             if self.current_state == state_name:
                 self.start_idle_loop()
+
