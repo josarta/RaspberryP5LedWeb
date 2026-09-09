@@ -122,6 +122,11 @@ class HardwareManager:
         self.last_log = f"ALL GPIOs -> {'ON' if state else 'OFF'} @ {time.strftime('%H:%M:%S')}"
         self.update_oled()
 
+    def set_repeat_mode(self, enabled: bool):
+        self.video_player.set_repeat_mode(enabled)
+        self.last_log = f"Modo Bucle Evento: {'ON' if enabled else 'OFF'}"
+        self.update_oled()
+
     def get_system_metrics(self) -> dict:
         cpu_percent = psutil.cpu_percent(interval=None)
         ram = psutil.virtual_memory()

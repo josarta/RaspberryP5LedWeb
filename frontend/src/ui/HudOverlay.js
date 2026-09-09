@@ -114,6 +114,19 @@ export class HudOverlay {
       });
     }
 
+    this.btnToggleRepeat = document.getElementById('btn-toggle-repeat');
+    this.repeatMode = false;
+    if (this.btnToggleRepeat) {
+      this.btnToggleRepeat.addEventListener('click', () => {
+        this.repeatMode = !this.repeatMode;
+        this.socketClient.setRepeatMode(this.repeatMode);
+        this.btnToggleRepeat.textContent = this.repeatMode ? '🔁 EN BUCLE' : '1 VEZ';
+        this.btnToggleRepeat.style.color = this.repeatMode ? '#00f0ff' : '#8fa0b3';
+        this.btnToggleRepeat.style.borderColor = this.repeatMode ? '#00f0ff' : 'rgba(255,255,255,0.2)';
+        this.btnToggleRepeat.style.background = this.repeatMode ? 'rgba(0,240,255,0.15)' : 'rgba(255,255,255,0.1)';
+      });
+    }
+
     // Configuración de IP personalizada
     const savedHost = localStorage.getItem('rpi_host_url') || (window.location.hostname ? `http://${window.location.hostname}:8000` : 'http://localhost:8000');
     if (this.inputHostIp) {

@@ -89,4 +89,10 @@ export class SocketClient {
       this.socket.emit('set_all_leds', { state });
     }
   }
+
+  setRepeatMode(enabled) {
+    if (this.socket.connected) {
+      this.socket.emit('set_repeat_mode', { enabled });
+    }
+  }
 }

@@ -78,6 +78,13 @@ async def set_all_leds(sid, data):
     print(f"⚡ [GPIO] TODOS los pines -> {'ON' if state else 'OFF'}")
     await sio.emit("state_update", hw.get_full_state())
 
+@sio.event
+async def set_repeat_mode(sid, data):
+    enabled = bool(data.get("enabled", False))
+    hw.set_repeat_mode(enabled)
+    print(f"🎬 [Video] Modo repetición evento -> {'ON' if enabled else 'OFF'}")
+    await sio.emit("state_update", hw.get_full_state())
+
 # Montar Socket.IO sobre la app ASGI
 socket_app = socketio.ASGIApp(sio, app)
 
