@@ -51,7 +51,7 @@ export class BreakoutBoardMesh {
   constructor() {
     this.group = new THREE.Group();
     this.virtualOled = new VirtualOLED();
-    this.ledMap = new Map(); // pin -> { mesh, material, light, config }
+    this.ledMap = new Map();
     this.clickableObjects = [];
 
     this.buildPCB();
@@ -62,10 +62,9 @@ export class BreakoutBoardMesh {
   }
 
   buildPCB() {
-    // Placa verde Freenove (Aprox 9.0 x 9.0 cm)
     const pcbGeo = new THREE.BoxGeometry(9.2, 0.16, 9.2);
     const pcbMat = new THREE.MeshStandardMaterial({
-      color: 0x0b6623, // Freenove PCB Green
+      color: 0x0b6623,
       roughness: 0.45,
       metalness: 0.15
     });
@@ -73,7 +72,6 @@ export class BreakoutBoardMesh {
     pcb.receiveShadow = true;
     this.group.add(pcb);
 
-    // Orificios dorados en 4 esquinas
     const holePositions = [
       [-4.1, 0.09, -4.1],
       [4.1, 0.09, -4.1],
@@ -92,9 +90,8 @@ export class BreakoutBoardMesh {
   }
 
   buildTerminalBlocks() {
-    // 2 Bloques de terminales verdes (Izquierda y Derecha)
     const blockMat = new THREE.MeshStandardMaterial({
-      color: 0x1e824c, // Verde plástico de terminal block
+      color: 0x1e824c,
       roughness: 0.6
     });
     const screwMat = new THREE.MeshStandardMaterial({
@@ -106,21 +103,18 @@ export class BreakoutBoardMesh {
     const screwGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.06, 12);
 
     [-3.8, 3.8].forEach((xPos, colIdx) => {
-      // Cuerpo plástico del bloque
       const blockGeo = new THREE.BoxGeometry(1.4, 0.85, 7.8);
       const block = new THREE.Mesh(blockGeo, blockMat);
       block.position.set(xPos, 0.5, 0);
       block.castShadow = true;
       this.group.add(block);
 
-      // 20 tornillos metálicos superiores
       for (let i = 0; i < 20; i++) {
         const zPos = -3.42 + i * 0.36;
         const screw = new THREE.Mesh(screwGeo, screwMat);
         screw.position.set(xPos, 0.94, zPos);
         this.group.add(screw);
 
-        // Agujero de inserción de cable
         const wireHoleGeo = new THREE.BoxGeometry(0.5, 0.3, 0.25);
         const holeMat = new THREE.MeshBasicMaterial({ color: 0x050505 });
         const hole = new THREE.Mesh(wireHoleGeo, holeMat);
@@ -131,14 +125,12 @@ export class BreakoutBoardMesh {
   }
 
   buildCenterHeaders() {
-    // Header 2x20 negro central
     const baseGeo = new THREE.BoxGeometry(1.1, 0.5, 7.6);
     const baseMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9 });
     const headerBase = new THREE.Mesh(baseGeo, baseMat);
     headerBase.position.set(0, 0.33, 0);
     this.group.add(headerBase);
 
-    // 40 Pines dorados
     const pinGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.55, 8);
     const pinMat = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.95, roughness: 0.1 });
 
@@ -153,7 +145,6 @@ export class BreakoutBoardMesh {
   }
 
   buildSMDLeds() {
-    // Construir los 40 LEDs SMD (20 a la izq y 20 a la der)
     const ledGeo = new THREE.BoxGeometry(0.18, 0.1, 0.22);
 
     const setupSide = (configList, xOffset, colKey) => {
@@ -178,12 +169,10 @@ export class BreakoutBoardMesh {
         ledMesh.position.set(xOffset, 0.14, zPos);
         this.group.add(ledMesh);
 
-        // Luz puntual tenue
         const pLight = new THREE.PointLight(cfg.color, isPower ? 0.6 : 0, 1.2, 2);
         pLight.position.set(xOffset, 0.3, zPos);
         this.group.add(pLight);
 
-        // Marco interactivo ampliado para facilitar el clic
         if (cfg.bcm !== null) {
           const clickBoxGeo = new THREE.BoxGeometry(0.8, 0.6, 0.32);
           const clickMat = new THREE.MeshBasicMaterial({ visible: false });
@@ -204,15 +193,14 @@ export class BreakoutBoardMesh {
       });
     };
 
-    // Columna Izquierda (x = -1.9) y Columna Derecha (x = 1.9)
     setupSide(PIN_CONFIG_LEFT, -1.9, 'left');
     setupSide(PIN_CONFIG_RIGHT, 1.9, 'right');
   }
 
   buildOledModule() {
-    // Pantalla OLED SSD1306 conectada en la parte superior/lateral
+    // Pantalla OLED SSD1306 posicionada ARRIBA (Norte) de la placa
     const oledGroup = new THREE.Group();
-    oledGroup.position.set(0, 0.45, 6.2); // Elevada frente a la placa
+    oledGroup.position.set(0, 0.45, -6.0); // Posicionada arriba para dejar la board 100% visible
 
     // PCB del módulo OLED
     const oledPcbGeo = new THREE.BoxGeometry(3.6, 0.1, 2.6);
@@ -224,10 +212,10 @@ export class BreakoutBoardMesh {
     const frameGeo = new THREE.BoxGeometry(3.3, 0.08, 1.8);
     const frameMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 0.1 });
     const frame = new THREE.Mesh(frameGeo, frameMat);
-    frame.position.set(0, 0.08, -0.1);
+    frame.position.set(0, 0.08, 0.1);
     oledGroup.add(frame);
 
-    // Pantalla emisiva con CanvasTexture
+    // Pantalla emisiva con CanvasTexture de alta resolución
     const screenGeo = new THREE.PlaneGeometry(3.1, 1.6);
     screenGeo.rotateX(-Math.PI / 2);
 
@@ -235,27 +223,29 @@ export class BreakoutBoardMesh {
       map: this.virtualOled.getTexture(),
       emissiveMap: this.virtualOled.getTexture(),
       emissive: 0xffffff,
-      emissiveIntensity: 1.3,
+      emissiveIntensity: 1.4,
       roughness: 0.2,
       metalness: 0.1
     });
 
     const screenMesh = new THREE.Mesh(screenGeo, screenMat);
-    screenMesh.position.set(0, 0.14, -0.1);
+    screenMesh.position.set(0, 0.14, 0.1);
+    screenMesh.userData = { isOLED: true };
     oledGroup.add(screenMesh);
+    this.clickableObjects.push(screenMesh);
 
-    // Cables de conexión flexibles simulados (I2C: VCC, GND, SCL, SDA)
+    // Cables de conexión flexibles simulados (I2C: VCC, GND, SCL, SDA hacia la parte superior)
     const curvePoints = [
-      [new THREE.Vector3(-1.2, 0.1, 5.0), new THREE.Vector3(-3.8, 0.6, -3.42), 0xffaa00], // 3V3
-      [new THREE.Vector3(-0.4, 0.1, 5.0), new THREE.Vector3(-3.8, 0.6, -3.06), 0x00f0ff], // SDA
-      [new THREE.Vector3(0.4, 0.1, 5.0),  new THREE.Vector3(-3.8, 0.6, -2.70), 0xff00ff], // SCL
-      [new THREE.Vector3(1.2, 0.1, 5.0),  new THREE.Vector3(-3.8, 0.6, -1.98), 0x222222]  // GND
+      [new THREE.Vector3(-1.2, 0.1, -4.8), new THREE.Vector3(-3.8, 0.6, -3.42), 0xffaa00], // 3V3
+      [new THREE.Vector3(-0.4, 0.1, -4.8), new THREE.Vector3(-3.8, 0.6, -3.06), 0x00f0ff], // SDA
+      [new THREE.Vector3(0.4, 0.1, -4.8),  new THREE.Vector3(-3.8, 0.6, -2.70), 0xff00ff], // SCL
+      [new THREE.Vector3(1.2, 0.1, -4.8),  new THREE.Vector3(-3.8, 0.6, -1.98), 0x222222]  // GND
     ];
 
     curvePoints.forEach(([pStart, pEnd, colorHex]) => {
       const curve = new THREE.QuadraticBezierCurve3(
         pStart,
-        new THREE.Vector3((pStart.x + pEnd.x) / 2, 2.0, (pStart.z + pEnd.z) / 2),
+        new THREE.Vector3((pStart.x + pEnd.x) / 2, 1.8, (pStart.z + pEnd.z) / 2),
         pEnd
       );
       const tubeGeo = new THREE.TubeGeometry(curve, 20, 0.04, 8, false);
@@ -289,4 +279,3 @@ export class BreakoutBoardMesh {
     this.virtualOled.update(stateData);
   }
 }
-

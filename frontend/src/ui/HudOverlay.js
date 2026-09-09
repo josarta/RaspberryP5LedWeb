@@ -1,9 +1,8 @@
 import { PIN_CONFIG_LEFT, PIN_CONFIG_RIGHT } from '../scene/BreakoutBoardMesh.js';
 
 export class HudOverlay {
-  constructor(socketClient, audio = null) {
+  constructor(socketClient) {
     this.socketClient = socketClient;
-    this.audio = audio;
     this.listContainer = document.getElementById('gpio-list');
     this.hwBadge = document.getElementById('hw-mode-badge');
     this.activeCountLabel = document.getElementById('active-count-label');
@@ -15,7 +14,6 @@ export class HudOverlay {
 
     this.btnAllOn = document.getElementById('btn-all-on');
     this.btnAllOff = document.getElementById('btn-all-off');
-    this.btnToggleSound = document.getElementById('btn-toggle-sound');
     this.inputHostIp = document.getElementById('input-host-ip');
     this.btnConnectIp = document.getElementById('btn-connect-ip');
 
@@ -74,7 +72,6 @@ export class HudOverlay {
         actionDiv.appendChild(toggleBtn);
 
         row.addEventListener('click', () => {
-          if (this.audio) this.audio.initContext();
           this.socketClient.toggleLed(item.bcm);
         });
       } else {
@@ -94,23 +91,12 @@ export class HudOverlay {
   initActions() {
     if (this.btnAllOn) {
       this.btnAllOn.addEventListener('click', () => {
-        if (this.audio) this.audio.initContext();
         this.socketClient.setAllLeds(true);
       });
     }
     if (this.btnAllOff) {
       this.btnAllOff.addEventListener('click', () => {
-        if (this.audio) this.audio.initContext();
         this.socketClient.setAllLeds(false);
-      });
-    }
-
-    if (this.btnToggleSound && this.audio) {
-      this.btnToggleSound.addEventListener('click', () => {
-        const isMuted = this.audio.toggleMute();
-        this.btnToggleSound.textContent = isMuted ? '🔇 MUTE' : '🔊 ON';
-        this.btnToggleSound.style.color = isMuted ? '#ff3366' : '#00f0ff';
-        this.btnToggleSound.style.borderColor = isMuted ? '#ff3366' : '#00f0ff';
       });
     }
 

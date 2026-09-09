@@ -70,10 +70,15 @@ Conecta los 4 cables hembra-hembra desde la pantalla OLED a los terminales de to
    ```text
    🟢 [HW] 28 Pines GPIO físicos inicializados correctamente.
    🟢 [HW] Pantalla OLED SSD1306 física detectada en Bus 1, Dirección 0x3c.
-   🚀 Servidor IoT Raspberry Pi corriendo
-   👉 API REST:     http://localhost:8000/api/status
-   👉 WebSockets:   http://localhost:8000/socket.io/
+    Servidor IoT & Pantalla Nativa Raspberry Pi 5
+   👉 Servidor API & WebSockets: http://localhost:8000/api/status
+   👉 Catálogo Multimedia:       http://localhost:8000/api/media/catalog
+   👉 Atajos en Pantalla:        [F] Pantalla Completa | [H] HUD | [M] Audio | [R] Loader | [ESC] Salir
    ```
+
+   > [!TIP]
+   > **Pantalla Conectada a la Raspberry Pi (HDMI / DSI):** Se abrirá directamente en **pantalla completa sin bordes (superpuesta al escritorio)**, sin teclado virtual en pantalla.
+   > **Reproducción de Videos:** Por defecto reproduce **1 sola vez** (*1-shot*) y sostiene el frame. Si activas el botón de repetición desde la interfaz web, entrará en **bucle continuo (*loop*)**.
 
 4. **Obtén la IP de tu Raspberry Pi:**
    ```bash

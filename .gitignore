@@ -20,3 +20,6 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Media temporary cache
+backend/media/audio_cache/
+

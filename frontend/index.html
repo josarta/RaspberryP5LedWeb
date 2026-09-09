@@ -154,7 +154,7 @@
       display: flex;
       justify-content: center;
     }
-    #oled-mirror-canvas { width: 100%; height: auto; image-rendering: pixelated; border-radius: 4px; }
+    #oled-mirror-canvas { width: 100%; height: auto; border-radius: 6px; box-shadow: 0 0 10px rgba(0, 240, 255, 0.2); }
 
     .log-stream {
       font-family: monospace;
@@ -206,11 +206,6 @@
       </div>
 
       <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
-        <span style="font-size: 0.75rem; color: var(--text-muted);">Efectos de Sonido</span>
-        <button id="btn-toggle-sound" style="background: rgba(0,240,255,0.15); border: 1px solid var(--neon-cyan); color: var(--neon-cyan); font-size: 0.7rem; font-weight: bold; padding: 2px 8px; border-radius: 4px; cursor: pointer;">🔊 ON</button>
-      </div>
-
-      <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.03); padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06);">
         <span style="font-size: 0.75rem; color: var(--text-muted);">Bucle de Evento DSI</span>
         <button id="btn-toggle-repeat" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #8fa0b3; font-size: 0.7rem; font-weight: bold; padding: 2px 8px; border-radius: 4px; cursor: pointer;">1 VEZ</button>
       </div>
@@ -243,7 +238,7 @@
       </div>
 
       <div class="oled-box">
-        <canvas id="oled-mirror-canvas" width="128" height="64"></canvas>
+        <canvas id="oled-mirror-canvas" width="512" height="256"></canvas>
       </div>
 
       <div style="display: flex; flex-direction: column; gap: 3px;">
