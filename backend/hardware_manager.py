@@ -1,13 +1,13 @@
 """
 hardware_manager.py - Gestor de hardware para Raspberry Pi 5 y Breakout Board Freenove
-Soporta control de 28 pines GPIO, display OLED SSD1306 / SH1106 y efectos de sonido en Backend
+Soporta control de 28 pines GPIO, display OLED SSD1306 / SH1106 y reproductor de video en pantalla completa
 """
 import os
 import time
 import socket
 import psutil
 from oled_renderer import OLEDRenderer
-from audio_manager import BackendAudio
+from video_player import FullscreenVideoPlayer
 
 IS_RPI = False
 try:
@@ -30,7 +30,7 @@ class HardwareManager:
         self.is_gpio_available = False
         self.is_oled_available = False
         self.renderer = OLEDRenderer()
-        self.audio = BackendAudio()
+        self.video_player = FullscreenVideoPlayer()
         self.led_state = {str(pin): False for pin in self.ALL_BCM_PINS}
         self.last_log = "Breakout Board Ready"
         self.physical_leds = {}
@@ -81,7 +81,7 @@ class HardwareManager:
 
         self.update_oled()
 
-    def toggle_led(self, pin: int, forced_state: bool = None, play_audio: bool = True) -> bool:
+    def toggle_led(self, pin: int, forced_state: bool = None, trigger_video: bool = True) -> bool:
         pin_str = str(pin)
         if pin_str not in self.led_state:
             return False
@@ -89,12 +89,12 @@ class HardwareManager:
         new_state = (not self.led_state[pin_str]) if forced_state is None else bool(forced_state)
         self.led_state[pin_str] = new_state
 
-        # Reproducir sonido del backend
-        if play_audio:
+        # Conmutar video en pantalla completa con audio
+        if trigger_video:
             if new_state:
-                self.audio.play_on()
+                self.video_player.trigger_on()
             else:
-                self.audio.play_off()
+                self.video_player.trigger_off()
 
         if self.is_gpio_available and pin_str in self.physical_leds:
             try:
@@ -111,14 +111,13 @@ class HardwareManager:
         return new_state
 
     def set_all_leds(self, state: bool):
-        # Reproducir sonido general
         if state:
-            self.audio.play_on()
+            self.video_player.trigger_on()
         else:
-            self.audio.play_off()
+            self.video_player.trigger_off()
 
         for pin in self.ALL_BCM_PINS:
-            self.toggle_led(pin, forced_state=state, play_audio=False)
+            self.toggle_led(pin, forced_state=state, trigger_video=False)
             
         self.last_log = f"ALL GPIOs -> {'ON' if state else 'OFF'} @ {time.strftime('%H:%M:%S')}"
         self.update_oled()
