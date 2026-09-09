@@ -193,6 +193,11 @@ class NativeDisplayApp:
         self.pre_touch_video = "idle.mp4"
         self.pre_touch_loop = False
 
+        # Control de estado de inactividad (InactividadDurmiendo.mp4)
+        self.inactivity_timeout = 25.0  # 25 segundos sin actividad para entrar en modo reposo
+        self.last_activity_time = time.time()
+        self.sleep_video = "InactividadDurmiendo.mp4"
+
         # Sub-motor de video con audio integrado
         self.video = NativeVideoPlayer(self.videos_dir, self.audio_cache_dir)
 
@@ -205,6 +210,18 @@ class NativeDisplayApp:
                     subprocess.run(["pkill", "-f", proc], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception:
                     pass
+
+    def reset_activity(self):
+        """Reinicia el reloj de inactividad y despierta el dispositivo si estaba durmiendo."""
+        self.last_activity_time = time.time()
+        if self.state == "SLEEPING":
+            self.state = "IDLE"
+            self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
+            self.last_log = "Sistema Activo (Despierto)"
+
+    def trigger_wake_up(self):
+        """Fuerza despertar desde la API o WebSockets."""
+        self.event_queue.put(("WAKE_UP", None))
 
     def _get_font(self, font_name: str, size: int, bold: bool = True):
         """Devuelve una fuente cacheada de forma segura sin fugas de descriptores de archivo."""
@@ -225,11 +242,12 @@ class NativeDisplayApp:
 
     def handle_touch_press(self):
         """Maneja el inicio de un toque/clic en la pantalla: reproduce bebe.mp4 de inmediato."""
+        self.reset_activity()
         self.is_touch_held = True
         if self.state != "TOUCH_INTERACTION":
-            self.pre_touch_state = self.state if self.state != "TOUCH_INTERACTION" else "IDLE"
-            self.pre_touch_video = self.video.current_file or "idle.mp4"
-            self.pre_touch_loop = self.video.is_looping
+            self.pre_touch_state = "IDLE"
+            self.pre_touch_video = "idle.mp4"
+            self.pre_touch_loop = self.repeat_event_mode
             self.state = "TOUCH_INTERACTION"
             self.touch_start_time = time.time()
             self.last_log = "TACTIL: Video Bebe Activo"
@@ -237,6 +255,7 @@ class NativeDisplayApp:
 
     def handle_touch_release(self):
         """Maneja la liberación del toque/clic en la pantalla."""
+        self.reset_activity()
         self.is_touch_held = False
 
     def trigger_touch_down(self):
@@ -358,6 +377,8 @@ class NativeDisplayApp:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.is_running = False
+                elif event.type == pygame.MOUSEMOTION:
+                    self.reset_activity()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
                         self.handle_touch_press()
@@ -369,6 +390,7 @@ class NativeDisplayApp:
                 elif event.type == pygame.FINGERUP:
                     self.handle_touch_release()
                 elif event.type == pygame.KEYDOWN:
+                    self.reset_activity()
                     if event.key in [pygame.K_ESCAPE, pygame.K_q]:
                         self.is_running = False
                     elif event.key in [pygame.K_f, pygame.K_F11]:
@@ -417,6 +439,9 @@ class NativeDisplayApp:
                         if "last_log" in ev_data:
                             self.last_log = ev_data["last_log"]
 
+                    elif ev_type == "WAKE_UP":
+                        self.reset_activity()
+
                     elif ev_type == "TOUCH_DOWN":
                         self.handle_touch_press()
 
@@ -424,18 +449,21 @@ class NativeDisplayApp:
                         self.handle_touch_release()
 
                     elif ev_type == "PLAY_LED_ON":
+                        self.reset_activity()
                         pin = ev_data
                         self.state = "PLAYING_EVENT"
                         self.last_log = f"LED ON (Pin {pin})" if pin else "ALL LEDS ON"
                         self.video.load_video("led_on.mp4", loop=self.repeat_event_mode)
 
                     elif ev_type == "PLAY_LED_OFF":
+                        self.reset_activity()
                         pin = ev_data
                         self.state = "PLAYING_EVENT"
                         self.last_log = f"LED OFF (Pin {pin})" if pin else "ALL LEDS OFF"
                         self.video.load_video("led_off.mp4", loop=self.repeat_event_mode)
 
                     elif ev_type == "SHOW_IMAGE":
+                        self.reset_activity()
                         fname, cap, dur = ev_data
                         img_path = os.path.join(self.images_dir, fname) if not os.path.exists(fname) else fname
                         if os.path.exists(img_path):
@@ -449,16 +477,19 @@ class NativeDisplayApp:
                                 pass
 
                     elif ev_type == "SHOW_VIDEO":
+                        self.reset_activity()
                         fname, loop = ev_data
                         self.state = "PLAYING_EVENT"
                         self.video.load_video(fname, loop=loop)
 
                     elif ev_type == "SET_VOLUME":
+                        self.reset_activity()
                         self.volume = max(0.0, min(1.0, float(ev_data)))
                         self.video.set_volume(self.volume)
                         self.last_log = f"Volumen: {int(self.volume * 100)}%"
 
                     elif ev_type == "SET_AUDIO_ENABLED":
+                        self.reset_activity()
                         self.audio_enabled = bool(ev_data)
                         self.video.set_audio_enabled(self.audio_enabled)
 
@@ -502,6 +533,7 @@ class NativeDisplayApp:
                     loader_pct = 100.0
                     if now - loader_step_timer > 0.7:
                         self.state = "IDLE"
+                        self.last_activity_time = now
                         self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
 
                 bar_w, bar_h = min(600, int(current_w * 0.75)), 14
@@ -519,13 +551,27 @@ class NativeDisplayApp:
                 screen.blit(status_txt, (cx - status_txt.get_width() // 2, bar_y + 24))
 
             # =================================================================
-            # ESTADO 2: VIDEO O CANVAS INTERACTIVO (IDLE / EVENTO / TACTIL)
+            # ESTADO 2: VIDEO O CANVAS INTERACTIVO (IDLE / EVENTO / TACTIL / REPOSO)
             # =================================================================
-            elif self.state in ["IDLE", "PLAYING_EVENT", "TOUCH_INTERACTION"]:
+            elif self.state in ["IDLE", "PLAYING_EVENT", "TOUCH_INTERACTION", "SLEEPING"]:
+                # Transición automática a reposo por inactividad
+                if self.state == "IDLE":
+                    if (now - self.last_activity_time) >= self.inactivity_timeout:
+                        self.state = "SLEEPING"
+                        self.last_log = "Inactividad: Durmiendo..."
+                        self.video.load_video(self.sleep_video, loop=True)
+
+                # Transición de retorno cuando finaliza un video de evento
+                elif self.state == "PLAYING_EVENT":
+                    if not self.video.is_playing and not self.repeat_event_mode:
+                        self.state = "IDLE"
+                        self.last_activity_time = now
+                        self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
+
+                # Renderizar frame de video centrado en el área segura
                 frame_surf = self.video.get_next_frame_surface((safe_w, safe_h))
                 if frame_surf:
                     fw, fh = frame_surf.get_size()
-                    # Centrado uniforme perfecto en el área segura libre
                     pos_x = (current_w - fw) // 2
                     pos_y = safe_top + (safe_h - fh) // 2
                     screen.blit(frame_surf, (pos_x, pos_y))
@@ -549,9 +595,9 @@ class NativeDisplayApp:
                     if not self.is_touch_held:
                         elapsed = now - self.touch_start_time
                         if elapsed >= self.min_touch_duration:
-                            # Fin de la interacción: restaurar video y estado previo
-                            self.state = self.pre_touch_state if self.pre_touch_state != "TOUCH_INTERACTION" else "IDLE"
-                            self.video.load_video(self.pre_touch_video or "idle.mp4", loop=self.pre_touch_loop)
+                            self.state = "IDLE"
+                            self.last_activity_time = now
+                            self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
                             self.last_log = "TACTIL: Fin interacción (2s+)"
 
             # =================================================================
@@ -573,6 +619,7 @@ class NativeDisplayApp:
 
                 if self.image_end_time > 0 and now > self.image_end_time:
                     self.state = "IDLE"
+                    self.last_activity_time = now
                     self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
 
             # =================================================================
@@ -586,7 +633,8 @@ class NativeDisplayApp:
                 # Lado izquierdo: Indicador de estado y Título
                 dot_x = margin_x + 14
                 dot_y = hdr_y + hdr_h // 2
-                pygame.draw.circle(screen, C_GREEN, (dot_x, dot_y), 6)
+                dot_color = C_YELLOW if self.state == "SLEEPING" else C_GREEN
+                pygame.draw.circle(screen, dot_color, (dot_x, dot_y), 6)
 
                 title_text = "RPI 5 KIOSK" if current_w < 900 else "RPI 5 BREAKOUT KIOSK"
                 title_surf = font_hud.render(title_text, True, C_WHITE)
@@ -605,6 +653,9 @@ class NativeDisplayApp:
                 if self.state == "TOUCH_INTERACTION":
                     mode_label = "BEBE"
                     loop_badge = "[HOLD]"
+                elif self.state == "SLEEPING":
+                    mode_label = "DURMIENDO"
+                    loop_badge = "[REPOSO zZz]"
                 elif self.state == "PLAYING_EVENT":
                     mode_label = "EVENT"
                     loop_badge = "[LOOP]" if self.repeat_event_mode else "[1-SHOT]"
@@ -613,7 +664,7 @@ class NativeDisplayApp:
                     loop_badge = "[LOOP]" if self.repeat_event_mode else "[1-SHOT]"
 
                 mode_str = f"{mode_label} {loop_badge}"
-                mode_surf = font_hud.render(mode_str, True, C_CYAN)
+                mode_surf = font_hud.render(mode_str, True, C_YELLOW if self.state == "SLEEPING" else C_CYAN)
 
                 right_cursor_x = current_w - margin_x - 14
 

@@ -121,6 +121,11 @@ class MediaManager:
             "loop": loop
         })
 
+    def trigger_wake_up(self):
+        """Despierta la pantalla nativa de inactividad."""
+        if self.native_app:
+            self.native_app.trigger_wake_up()
+
     def set_repeat_mode(self, enabled: bool):
         self.repeat_event_mode = bool(enabled)
         if self.native_app:

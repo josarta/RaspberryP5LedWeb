@@ -105,6 +105,12 @@ async def api_set_volume(level: float):
     actual = hw.media_manager.set_volume(vol)
     return {"status": "ok", "volume": actual, "percentage": int(actual * 100)}
 
+@app.post("/api/wake")
+async def api_wake():
+    """Despierta la pantalla nativa del estado de reposo."""
+    native_display.trigger_wake_up()
+    return {"status": "ok", "action": "wake"}
+
 @app.post("/api/touch/down")
 async def api_touch_down():
     """Simula inicio de toque/presión en la pantalla (dispara bebe.mp4)."""
@@ -135,6 +141,10 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     print(f"🔴 [WS] Cliente desconectado: {sid}")
+
+@sio.event
+async def wake_up(sid, data=None):
+    native_display.trigger_wake_up()
 
 @sio.event
 async def touch_event(sid, data):

@@ -95,4 +95,12 @@ export class SocketClient {
       this.socket.emit('set_repeat_mode', { enabled });
     }
   }
+
+  wakeUp() {
+    if (this.socket.connected) {
+      this.socket.emit('wake_up', {});
+    } else {
+      fetch(`${this.serverUrl}/api/wake`, { method: 'POST' }).catch(() => {});
+    }
+  }
 }
