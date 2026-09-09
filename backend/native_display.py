@@ -183,6 +183,7 @@ class NativeDisplayApp:
         self.current_image = None
         self.current_image_caption = ""
         self.image_end_time = 0
+        self._font_cache = {}
 
         # Control de interacción táctil reactiva (bebe.mp4)
         self.is_touch_held = False
@@ -204,6 +205,23 @@ class NativeDisplayApp:
                     subprocess.run(["pkill", "-f", proc], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 except Exception:
                     pass
+
+    def _get_font(self, font_name: str, size: int, bold: bool = True):
+        """Devuelve una fuente cacheada de forma segura sin fugas de descriptores de archivo."""
+        key = (font_name, size, bold)
+        if key not in self._font_cache:
+            font_obj = None
+            try:
+                font_obj = pygame.font.SysFont(font_name, size, bold=bold)
+            except Exception:
+                font_obj = None
+            if font_obj is None:
+                try:
+                    font_obj = pygame.font.Font(None, size)
+                except Exception:
+                    font_obj = pygame.font.SysFont(None, size)
+            self._font_cache[key] = font_obj
+        return self._font_cache[key]
 
     def handle_touch_press(self):
         """Maneja el inicio de un toque/clic en la pantalla: reproduce bebe.mp4 de inmediato."""
@@ -315,14 +333,14 @@ class NativeDisplayApp:
             now = time.time()
             current_w, current_h = screen.get_size()
 
-            # Cálculo de fuentes tipográficas dinámicas adaptativas a la resolución
+            # Obtención de fuentes tipográficas cacheadas (sin re-instanciación por frame)
             font_size_title = max(18, min(32, int(current_h * 0.045)))
             font_size_main = max(12, min(20, int(current_h * 0.030)))
             font_size_hud = max(11, min(16, int(current_h * 0.026)))
 
-            font_title = pygame.font.SysFont("consolas", font_size_title, bold=True)
-            font_main = pygame.font.SysFont("consolas", font_size_main, bold=True)
-            font_hud = pygame.font.SysFont("consolas", font_size_hud, bold=True)
+            font_title = self._get_font("consolas", font_size_title, bold=True)
+            font_main = self._get_font("consolas", font_size_main, bold=True)
+            font_hud = self._get_font("consolas", font_size_hud, bold=True)
 
             # Cálculo de la zona segura central maximizada (barras superiores/inferiores compactas)
             margin_x = max(10, int(current_w * 0.015))

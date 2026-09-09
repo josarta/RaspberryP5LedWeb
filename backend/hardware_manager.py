@@ -42,6 +42,20 @@ class HardwareManager:
         self.physical_leds = {}
         self.oled_device = None
 
+        # Control de throttling para evitar fugas de descriptores de archivo y sobrecarga de I2C
+        self.last_metrics_time = 0.0
+        self.last_ip_time = 0.0
+        self.last_oled_probe_time = 0.0
+        self.last_oled_render_time = 0.0
+        self.cached_ip = "127.0.0.1"
+        self.cached_metrics = {
+            "cpu_percent": 0.0,
+            "cpu_temp": 42.0,
+            "ram_percent": 0.0,
+            "ip": "127.0.0.1",
+            "timestamp": time.time()
+        }
+
         self._init_gpio()
         self._init_oled()
 
@@ -66,14 +80,19 @@ class HardwareManager:
             self.is_gpio_available = False
 
     def _init_oled(self) -> bool:
-        """Inicializa la pantalla OLED SSD1306/SH1106 probando buses, direcciones y rotaciones."""
+        """Inicializa la pantalla OLED SSD1306/SH1106 con protección de frecuencia de escaneo."""
         if self.is_oled_available and self.oled_device is not None:
             return True
 
         if not HAS_LUMA:
             return False
 
-        # Intentar bus 1 (estándar RPi 5/4/3) y bus 0, direcciones 0x3C y 0x3D, y rotaciones 0 y 2
+        now = time.time()
+        # Escanear I2C como máximo una vez cada 5 segundos si está desconectado
+        if now - self.last_oled_probe_time < 5.0:
+            return False
+        self.last_oled_probe_time = now
+
         for port in [1, 0]:
             for addr in [0x3C, 0x3D]:
                 for device_class, dev_name in [(ssd1306, "SSD1306"), (sh1106, "SH1106")]:
@@ -113,7 +132,7 @@ class HardwareManager:
                 else:
                     self.physical_leds[pin_str].off()
             except Exception as e:
-                print(f"[HW Error] Fallo al conmutar GPIO {pin}: {e}")
+                pass
 
         status_str = "ON" if new_state else "OFF"
         self.last_log = f"IO{pin} -> {status_str} @ {time.strftime('%H:%M:%S')}"
@@ -121,49 +140,91 @@ class HardwareManager:
         return new_state
 
     def set_all_leds(self, state: bool):
+        # Conmutar todos los pines en lote sin saturar I2C ni abrir descriptores repetidos
+        new_state = bool(state)
         for pin in self.ALL_BCM_PINS:
-            self.toggle_led(pin, forced_state=state)
-            
-        self.last_log = f"ALL GPIOs -> {'ON' if state else 'OFF'} @ {time.strftime('%H:%M:%S')}"
-        self.update_oled()
+            pin_str = str(pin)
+            self.led_state[pin_str] = new_state
+            if self.is_gpio_available and pin_str in self.physical_leds:
+                try:
+                    if new_state:
+                        self.physical_leds[pin_str].on()
+                    else:
+                        self.physical_leds[pin_str].off()
+                except Exception:
+                    pass
+
+        self.last_log = f"ALL GPIOs -> {'ON' if new_state else 'OFF'} @ {time.strftime('%H:%M:%S')}"
+        self.update_oled(force=True)
 
     def set_repeat_mode(self, enabled: bool):
         self.media_manager.set_repeat_mode(enabled)
         self.last_log = f"Modo Bucle: {'ON' if enabled else 'OFF'}"
         self.update_oled()
 
-    def get_system_metrics(self) -> dict:
-        cpu_percent = psutil.cpu_percent(interval=None)
-        ram = psutil.virtual_memory()
+    def _get_ip_address(self) -> str:
+        """Obtiene la IP local de forma segura, refrescando como máximo cada 60s."""
+        now = time.time()
+        if now - self.last_ip_time < 60.0 and self.cached_ip:
+            return self.cached_ip
 
-        cpu_temp = 42.0
-        try:
-            if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
-                with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
-                    cpu_temp = float(f.read().strip()) / 1000.0
-            else:
-                cpu_temp = 40.0 + (cpu_percent * 0.15)
-        except Exception:
-            cpu_temp = 42.0
-
+        self.last_ip_time = now
         ip_addr = "127.0.0.1"
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0.2)
             s.connect(("8.8.8.8", 80))
             ip_addr = s.getsockname()[0]
             s.close()
         except Exception:
-            ip_addr = "192.168.1.37"
+            ip_addr = self.cached_ip or "192.168.1.37"
 
-        return {
-            "cpu_percent": cpu_percent,
-            "cpu_temp": round(cpu_temp, 1),
-            "ram_percent": ram.percent,
-            "ip": ip_addr,
-            "timestamp": time.time()
-        }
+        self.cached_ip = ip_addr
+        return self.cached_ip
 
-    def update_oled(self):
+    def get_system_metrics(self, force: bool = False) -> dict:
+        """Devuelve las métricas del sistema utilizando caché para respuesta instantánea a 60 FPS."""
+        now = time.time()
+        if not force and (now - self.last_metrics_time < 0.9):
+            return self.cached_metrics
+
+        self.last_metrics_time = now
+        try:
+            cpu_percent = psutil.cpu_percent(interval=None)
+            ram = psutil.virtual_memory()
+
+            cpu_temp = 42.0
+            try:
+                if os.path.exists("/sys/class/thermal/thermal_zone0/temp"):
+                    with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                        cpu_temp = float(f.read().strip()) / 1000.0
+                else:
+                    cpu_temp = 40.0 + (cpu_percent * 0.15)
+            except Exception:
+                cpu_temp = 42.0
+
+            ip_addr = self._get_ip_address()
+
+            self.cached_metrics = {
+                "cpu_percent": cpu_percent,
+                "cpu_temp": round(cpu_temp, 1),
+                "ram_percent": ram.percent,
+                "ip": ip_addr,
+                "timestamp": now
+            }
+        except Exception:
+            pass
+
+        return self.cached_metrics
+
+    def update_oled(self, force: bool = False):
+        """Actualiza el OLED con limitador de refresco (máximo 10 FPS) para no saturar el bus I2C."""
+        now = time.time()
+        if not force and (now - self.last_oled_render_time < 0.1):
+            return
+
+        self.last_oled_render_time = now
+
         if not self.is_oled_available or self.oled_device is None:
             if not self._init_oled():
                 return
