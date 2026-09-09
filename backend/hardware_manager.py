@@ -9,14 +9,20 @@ import psutil
 from oled_renderer import OLEDRenderer
 from media_manager import MediaManager
 
-IS_RPI = False
+HAS_GPIO = False
 try:
     from gpiozero import LED as GpioLED
+    HAS_GPIO = True
+except Exception:
+    HAS_GPIO = False
+
+HAS_LUMA = False
+try:
     from luma.core.interface.serial import i2c
     from luma.oled.device import ssd1306, sh1106
-    IS_RPI = True
+    HAS_LUMA = True
 except Exception:
-    IS_RPI = False
+    HAS_LUMA = False
 
 class HardwareManager:
     ALL_BCM_PINS = [
@@ -36,14 +42,14 @@ class HardwareManager:
         self.physical_leds = {}
         self.oled_device = None
 
-        self._init_hardware()
+        self._init_gpio()
+        self._init_oled()
 
-    def _init_hardware(self):
-        if not IS_RPI:
-            print("[HW] Modo Emulación / Digital Twin (Sin librerías RPi nativas).")
+    def _init_gpio(self):
+        if not HAS_GPIO:
+            print("🟡 [HW] Control GPIO físico no disponible (Modo Emulado).")
             return
 
-        # 1. Inicializar GPIOs físicos
         try:
             for pin in self.ALL_BCM_PINS:
                 try:
@@ -54,33 +60,43 @@ class HardwareManager:
             
             if len(self.physical_leds) > 0:
                 self.is_gpio_available = True
-                print(f"🟢 [HW] {len(self.physical_leds)} Pines GPIO físicos inicializados.")
+                print(f"🟢 [HW] {len(self.physical_leds)} Pines GPIO físicos inicializados correctamente.")
         except Exception as e:
             print(f"🔴 [HW Error] Fallo al inicializar GPIOs: {e}")
             self.is_gpio_available = False
 
-        # 2. Inicializar Pantalla OLED I2C (Freenove utiliza Bus 1, Dirección 0x3C, rotación 2/180°)
+    def _init_oled(self) -> bool:
+        """Inicializa la pantalla OLED SSD1306/SH1106 probando buses, direcciones y rotaciones."""
+        if self.is_oled_available and self.oled_device is not None:
+            return True
+
+        if not HAS_LUMA:
+            return False
+
+        # Intentar bus 1 (estándar RPi 5/4/3) y bus 0, direcciones 0x3C y 0x3D, y rotaciones 0 y 2
         for port in [1, 0]:
             for addr in [0x3C, 0x3D]:
                 for device_class, dev_name in [(ssd1306, "SSD1306"), (sh1106, "SH1106")]:
-                    try:
-                        serial = i2c(port=port, address=addr)
-                        # Probar con rotate=2 (180 grados, estándar Freenove)
-                        self.oled_device = device_class(serial, width=128, height=64, rotate=2)
-                        self.is_oled_available = True
-                        print(f"🟢 [HW] Pantalla OLED {dev_name} física detectada en Bus {port}, Dirección {hex(addr)}.")
-                        break
-                    except Exception:
-                        continue
-                if self.is_oled_available:
-                    break
-            if self.is_oled_available:
-                break
+                    for rot in [0, 2]:
+                        try:
+                            serial = i2c(port=port, address=addr)
+                            dev = device_class(serial, width=128, height=64, rotate=rot)
+                            
+                            # Enviar frame de prueba para confirmar comunicación I2C
+                            img = self.renderer.draw_frame(
+                                {"leds": self.led_state},
+                                self.get_system_metrics(),
+                                "OLED Inicializado"
+                            )
+                            dev.display(img)
+                            self.oled_device = dev
+                            self.is_oled_available = True
+                            print(f"🟢 [HW] Pantalla OLED {dev_name} física conectada y activa en Bus {port}, Dirección {hex(addr)}, Rotación {rot * 90}°.")
+                            return True
+                        except Exception:
+                            continue
 
-        if not self.is_oled_available:
-            print("🟡 [HW Info] Pantalla OLED no detectada en bus I2C (SDA=Pin 3, SCL=Pin 5, VCC=+3V3, GND=Pin 6).")
-
-        self.update_oled()
+        return False
 
     def toggle_led(self, pin: int, forced_state: bool = None) -> bool:
         pin_str = str(pin)
@@ -148,18 +164,22 @@ class HardwareManager:
         }
 
     def update_oled(self):
-        if self.is_oled_available and self.oled_device:
-            try:
-                metrics = self.get_system_metrics()
-                state = {"leds": self.led_state}
-                img = self.renderer.draw_frame(state, metrics, self.last_log)
-                self.oled_device.display(img)
-            except Exception:
-                pass
+        if not self.is_oled_available or self.oled_device is None:
+            if not self._init_oled():
+                return
+
+        try:
+            metrics = self.get_system_metrics()
+            state = {"leds": self.led_state}
+            img = self.renderer.draw_frame(state, metrics, self.last_log)
+            self.oled_device.display(img)
+        except Exception:
+            self.is_oled_available = False
+            self.oled_device = None
 
     def get_full_state(self) -> dict:
         mode_str = "Physical (GPIO+OLED)" if (self.is_gpio_available and self.is_oled_available) else (
-            "Physical (GPIO)" if self.is_gpio_available else "Emulated"
+            "Physical (GPIO)" if self.is_gpio_available else ("Physical (OLED)" if self.is_oled_available else "Emulated")
         )
         return {
             "leds": self.led_state,

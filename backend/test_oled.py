@@ -24,15 +24,17 @@ device = None
 for port in [1, 0]:
     for addr in [0x3C, 0x3D]:
         for dev_class, dev_name in [(ssd1306, "SSD1306"), (sh1106, "SH1106")]:
-            try:
-                print(f"Intentando conectar a {dev_name} en Bus I2C {port}, Dirección {hex(addr)}...")
-                serial = i2c(port=port, address=addr)
-                device = dev_class(serial, width=128, height=64, rotate=2)
-                print(f"🎉 ¡Éxito! Pantalla {dev_name} detectada.")
+            for rot in [0, 2]:
+                try:
+                    print(f"Probando {dev_name} en Bus {port}, Dir {hex(addr)}, Rotación {rot*90}°...")
+                    serial = i2c(port=port, address=addr)
+                    device = dev_class(serial, width=128, height=64, rotate=rot)
+                    print(f"🎉 ¡Éxito! Pantalla {dev_name} detectada y lista.")
+                    break
+                except Exception:
+                    continue
+            if device:
                 break
-            except Exception as ex:
-                # print(f"  Fallo: {ex}")
-                continue
         if device:
             break
     if device:
