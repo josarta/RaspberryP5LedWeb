@@ -70,3 +70,4 @@ try:
 
 except Exception as e:
     print(f"❌ Error al dibujar en el display: {e}")
+
