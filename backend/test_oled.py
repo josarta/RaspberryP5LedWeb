@@ -12,8 +12,8 @@ print("🔍 Probando pantalla OLED SSD1306 con controlador oficial...")
 print("="*60)
 
 try:
-    from api_oled import OLED
-    from api_expansion import Expansion
+    from oled import OLED
+    from expansion import Expansion
     from api_systemInfo import SystemInformation
     print("✅ Módulos de Hardware Freenove cargados.")
 except Exception as e:

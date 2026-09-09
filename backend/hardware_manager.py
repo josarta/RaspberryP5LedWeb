@@ -13,8 +13,8 @@ if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     except Exception:
         pass
-from api_oled import OLED
-from api_expansion import Expansion
+from oled import OLED
+from expansion import Expansion
 from api_systemInfo import SystemInformation
 from media_manager import MediaManager
 
