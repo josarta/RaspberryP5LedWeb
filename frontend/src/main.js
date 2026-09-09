@@ -3,7 +3,6 @@ import { SceneManager } from './scene/SceneManager.js';
 import { BreakoutBoardMesh } from './scene/BreakoutBoardMesh.js';
 import { SocketClient } from './network/SocketClient.js';
 import { HudOverlay } from './ui/HudOverlay.js';
-import { AudioFeedback } from './audio/AudioFeedback.js';
 
 class App {
   constructor() {
@@ -12,15 +11,13 @@ class App {
     this.breakoutBoard = new BreakoutBoardMesh();
     this.sceneManager.scene.add(this.breakoutBoard.group);
 
-    this.audio = new AudioFeedback();
     this.socketClient = new SocketClient();
-    this.hud = new HudOverlay(this.socketClient, this.audio);
+    this.hud = new HudOverlay(this.socketClient);
 
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
     this.hoveredObject = null;
-
-    this.previousLedStates = {};
+    this.isOledPressed = false;
 
     this.initInteraction();
     this.initNetworking();
@@ -50,9 +47,6 @@ class App {
     });
 
     window.addEventListener('pointerdown', (e) => {
-      // Activar contexto de audio con la primera interacción del usuario
-      this.audio.initContext();
-
       // Evitar clics sobre los paneles HUD 2D
       if (e.target.closest('.hud-panel') || e.target.closest('.top-hint')) return;
 
@@ -64,6 +58,20 @@ class App {
         if (hit.userData && hit.userData.isGPIO) {
           const pin = hit.userData.pin;
           this.socketClient.toggleLed(pin);
+        } else if (hit.userData && hit.userData.isOLED) {
+          this.isOledPressed = true;
+          if (this.socketClient.socket) {
+            this.socketClient.socket.emit('touch_event', { action: 'down' });
+          }
+        }
+      }
+    });
+
+    window.addEventListener('pointerup', () => {
+      if (this.isOledPressed) {
+        this.isOledPressed = false;
+        if (this.socketClient.socket) {
+          this.socketClient.socket.emit('touch_event', { action: 'up' });
         }
       }
     });
@@ -75,36 +83,9 @@ class App {
     });
 
     this.socketClient.onStateUpdate((state) => {
-      this.checkAudioTriggers(state);
       this.breakoutBoard.updateState(state);
       this.hud.update(state);
     });
-  }
-
-  checkAudioTriggers(state) {
-    if (!state.leds) return;
-
-    let turnedOnCount = 0;
-    let turnedOffCount = 0;
-
-    for (const [pin, isOn] of Object.entries(state.leds)) {
-      const prev = this.previousLedStates[pin];
-      if (prev !== undefined) {
-        if (!prev && isOn) {
-          turnedOnCount++;
-        } else if (prev && !isOn) {
-          turnedOffCount++;
-        }
-      }
-      this.previousLedStates[pin] = isOn;
-    }
-
-    // Reproducir sonido adecuado
-    if (turnedOnCount > 0) {
-      this.audio.playLedOn();
-    } else if (turnedOffCount > 0) {
-      this.audio.playLedOff();
-    }
   }
 
   animate() {

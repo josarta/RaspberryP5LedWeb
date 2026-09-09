@@ -1,13 +1,13 @@
 """
 hardware_manager.py - Gestor de hardware para Raspberry Pi 5 y Breakout Board Freenove
-Soporta control de 28 pines GPIO, display OLED SSD1306 / SH1106 y reproductor de video en pantalla completa
+Soporta control de 28 pines GPIO, display OLED SSD1306 (Freenove) y gestor multimedia.
 """
 import os
 import time
 import socket
 import psutil
 from oled_renderer import OLEDRenderer
-from video_player import FullscreenVideoPlayer
+from media_manager import MediaManager
 
 IS_RPI = False
 try:
@@ -30,7 +30,7 @@ class HardwareManager:
         self.is_gpio_available = False
         self.is_oled_available = False
         self.renderer = OLEDRenderer()
-        self.video_player = FullscreenVideoPlayer()
+        self.media_manager = MediaManager()
         self.led_state = {str(pin): False for pin in self.ALL_BCM_PINS}
         self.last_log = "Breakout Board Ready"
         self.physical_leds = {}
@@ -40,32 +40,33 @@ class HardwareManager:
 
     def _init_hardware(self):
         if not IS_RPI:
-            print("[HW] Ejecutando en modo Emulación / Digital Twin (Sin librerías RPi nativas).")
+            print("[HW] Modo Emulación / Digital Twin (Sin librerías RPi nativas).")
             return
 
-        # 1. Inicializar GPIOs físicos independientemente
+        # 1. Inicializar GPIOs físicos
         try:
             for pin in self.ALL_BCM_PINS:
                 try:
                     self.physical_leds[str(pin)] = GpioLED(pin)
                     self.physical_leds[str(pin)].off()
-                except Exception as ex:
+                except Exception:
                     pass
             
             if len(self.physical_leds) > 0:
                 self.is_gpio_available = True
-                print(f"🟢 [HW] {len(self.physical_leds)} Pines GPIO físicos inicializados correctamente.")
+                print(f"🟢 [HW] {len(self.physical_leds)} Pines GPIO físicos inicializados.")
         except Exception as e:
             print(f"🔴 [HW Error] Fallo al inicializar GPIOs: {e}")
             self.is_gpio_available = False
 
-        # 2. Inicializar Pantalla OLED I2C (Prueba SSD1306 y SH1106 en puertos 1 y 0, addrs 0x3C y 0x3D)
+        # 2. Inicializar Pantalla OLED I2C (Freenove utiliza Bus 1, Dirección 0x3C, rotación 2/180°)
         for port in [1, 0]:
             for addr in [0x3C, 0x3D]:
                 for device_class, dev_name in [(ssd1306, "SSD1306"), (sh1106, "SH1106")]:
                     try:
                         serial = i2c(port=port, address=addr)
-                        self.oled_device = device_class(serial, width=128, height=64)
+                        # Probar con rotate=2 (180 grados, estándar Freenove)
+                        self.oled_device = device_class(serial, width=128, height=64, rotate=2)
                         self.is_oled_available = True
                         print(f"🟢 [HW] Pantalla OLED {dev_name} física detectada en Bus {port}, Dirección {hex(addr)}.")
                         break
@@ -77,24 +78,17 @@ class HardwareManager:
                 break
 
         if not self.is_oled_available:
-            print("🟡 [HW Info] Pantalla OLED no detectada en bus I2C. Revisa la conexión I2C (SDA, SCL, VCC, GND).")
+            print("🟡 [HW Info] Pantalla OLED no detectada en bus I2C (SDA=Pin 3, SCL=Pin 5, VCC=+3V3, GND=Pin 6).")
 
         self.update_oled()
 
-    def toggle_led(self, pin: int, forced_state: bool = None, trigger_video: bool = True) -> bool:
+    def toggle_led(self, pin: int, forced_state: bool = None) -> bool:
         pin_str = str(pin)
         if pin_str not in self.led_state:
             return False
 
         new_state = (not self.led_state[pin_str]) if forced_state is None else bool(forced_state)
         self.led_state[pin_str] = new_state
-
-        # Conmutar video en pantalla completa con audio
-        if trigger_video:
-            if new_state:
-                self.video_player.trigger_on()
-            else:
-                self.video_player.trigger_off()
 
         if self.is_gpio_available and pin_str in self.physical_leds:
             try:
@@ -111,20 +105,15 @@ class HardwareManager:
         return new_state
 
     def set_all_leds(self, state: bool):
-        if state:
-            self.video_player.trigger_on()
-        else:
-            self.video_player.trigger_off()
-
         for pin in self.ALL_BCM_PINS:
-            self.toggle_led(pin, forced_state=state, trigger_video=False)
+            self.toggle_led(pin, forced_state=state)
             
         self.last_log = f"ALL GPIOs -> {'ON' if state else 'OFF'} @ {time.strftime('%H:%M:%S')}"
         self.update_oled()
 
     def set_repeat_mode(self, enabled: bool):
-        self.video_player.set_repeat_mode(enabled)
-        self.last_log = f"Modo Bucle Evento: {'ON' if enabled else 'OFF'}"
+        self.media_manager.set_repeat_mode(enabled)
+        self.last_log = f"Modo Bucle: {'ON' if enabled else 'OFF'}"
         self.update_oled()
 
     def get_system_metrics(self) -> dict:
@@ -148,7 +137,7 @@ class HardwareManager:
             ip_addr = s.getsockname()[0]
             s.close()
         except Exception:
-            ip_addr = "192.168.1.100"
+            ip_addr = "192.168.1.37"
 
         return {
             "cpu_percent": cpu_percent,
@@ -165,7 +154,7 @@ class HardwareManager:
                 state = {"leds": self.led_state}
                 img = self.renderer.draw_frame(state, metrics, self.last_log)
                 self.oled_device.display(img)
-            except Exception as e:
+            except Exception:
                 pass
 
     def get_full_state(self) -> dict:
