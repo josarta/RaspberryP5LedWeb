@@ -33,6 +33,8 @@ class NativeVideoPlayer:
         self.audio_enabled = True
         self.volume = 0.6
 
+        self.video_positions = {}
+
     def _ensure_audio_extracted(self, video_path):
         """Extrae la pista de audio del video en segundo plano o sincrónicamente a audio_cache."""
         base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -45,7 +47,7 @@ class NativeVideoPlayer:
                 pass
         return audio_path if os.path.exists(audio_path) else None
 
-    def load_video(self, filename, loop=False):
+    def load_video(self, filename, loop=False, preserve_position=False):
         path = os.path.join(self.videos_dir, filename)
         if not os.path.exists(path):
             if os.path.exists(filename):
@@ -54,7 +56,24 @@ class NativeVideoPlayer:
                 self.stop()
                 return False
 
-        if self.cap:
+        # Si ya es el archivo cargado y está abierto, reanudar de inmediato sin reabrir
+        if self.current_file == filename and self.cap is not None and self.cap.isOpened():
+            self.is_looping = loop
+            self.is_playing = True
+            self.last_frame_time = time.time()
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.unpause()
+                except Exception:
+                    pass
+            return True
+
+        # Guardar posición del frame actual antes de cambiar de video
+        if self.cap and self.current_file:
+            try:
+                self.video_positions[self.current_file] = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            except Exception:
+                pass
             self.cap.release()
 
         self.cap = cv2.VideoCapture(path)
@@ -62,6 +81,15 @@ class NativeVideoPlayer:
             self.cap = None
             self.is_playing = False
             return False
+
+        # Restaurar posición si se solicita
+        saved_frame = self.video_positions.get(filename, 0) if preserve_position else 0
+        total_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if saved_frame > 0 and total_frames > 0 and saved_frame < total_frames - 5:
+            try:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, saved_frame)
+            except Exception:
+                saved_frame = 0
 
         self.current_file = filename
         self.is_looping = loop
@@ -76,10 +104,36 @@ class NativeVideoPlayer:
             try:
                 pygame.mixer.music.load(audio_file)
                 pygame.mixer.music.set_volume(self.volume if self.audio_enabled else 0.0)
-                pygame.mixer.music.play(loops=-1 if loop else 0)
+                start_sec = (saved_frame / self.fps) if (preserve_position and saved_frame > 0 and self.fps > 0) else 0.0
+                pygame.mixer.music.play(loops=-1 if loop else 0, start=start_sec)
+            except Exception:
+                try:
+                    pygame.mixer.music.play(loops=-1 if loop else 0)
+                except Exception:
+                    pass
+        return True
+
+    def pause(self):
+        self.is_playing = False
+        if self.cap and self.current_file:
+            try:
+                self.video_positions[self.current_file] = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
             except Exception:
                 pass
-        return True
+        if pygame.mixer.get_init():
+            try:
+                pygame.mixer.music.pause()
+            except Exception:
+                pass
+
+    def resume(self):
+        if self.cap and self.cap.isOpened():
+            self.is_playing = True
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.unpause()
+                except Exception:
+                    pass
 
     def set_loop(self, loop: bool):
         self.is_looping = bool(loop)
@@ -185,13 +239,11 @@ class NativeDisplayApp:
         self.image_end_time = 0
         self._font_cache = {}
 
-        # Control de interacción táctil reactiva (bebe.mp4)
+        # Control de interacción táctil reactiva y continua (bebe.mp4)
         self.is_touch_held = False
         self.touch_start_time = 0.0
-        self.min_touch_duration = 2.0  # Mínimo 2 segundos de reproducción
-        self.pre_touch_state = "IDLE"
-        self.pre_touch_video = "idle.mp4"
-        self.pre_touch_loop = False
+        self.last_touch_release_time = 0.0
+        self.touch_release_delay = 0.6  # Margen de 0.6s tras soltar para toques consecutivos fluidos
 
         # Control de estado de inactividad (InactividadDurmiendo.mp4)
         self.inactivity_timeout = 25.0  # 25 segundos sin actividad para entrar en modo reposo
@@ -216,7 +268,7 @@ class NativeDisplayApp:
         self.last_activity_time = time.time()
         if self.state == "SLEEPING":
             self.state = "IDLE"
-            self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
+            self.video.load_video("idle.mp4", loop=self.repeat_event_mode, preserve_position=True)
             self.last_log = "Sistema Activo (Despierto)"
 
     def trigger_wake_up(self):
@@ -241,22 +293,23 @@ class NativeDisplayApp:
         return self._font_cache[key]
 
     def handle_touch_press(self):
-        """Maneja el inicio de un toque/clic en la pantalla: reproduce bebe.mp4 de inmediato."""
+        """Maneja el inicio de un toque/clic en la pantalla: reproduce o continúa bebe.mp4 de inmediato."""
         self.reset_activity()
         self.is_touch_held = True
+        self.last_touch_release_time = 0.0
         if self.state != "TOUCH_INTERACTION":
-            self.pre_touch_state = "IDLE"
-            self.pre_touch_video = "idle.mp4"
-            self.pre_touch_loop = self.repeat_event_mode
             self.state = "TOUCH_INTERACTION"
             self.touch_start_time = time.time()
             self.last_log = "TACTIL: Video Bebe Activo"
-            self.video.load_video("bebe.mp4", loop=True)
+            self.video.load_video("bebe.mp4", loop=True, preserve_position=True)
+        else:
+            self.video.resume()
 
     def handle_touch_release(self):
         """Maneja la liberación del toque/clic en la pantalla."""
         self.reset_activity()
         self.is_touch_held = False
+        self.last_touch_release_time = time.time()
 
     def trigger_touch_down(self):
         self.event_queue.put(("TOUCH_DOWN", None))
@@ -590,15 +643,15 @@ class NativeDisplayApp:
                             if is_active:
                                 pygame.draw.circle(screen, C_CYAN, (nx, ny), 22, 3)
 
-                # Control temporal de la interacción táctil (bebe.mp4)
+                # Control reactivo y continuo de la interacción táctil (bebe.mp4)
                 if self.state == "TOUCH_INTERACTION":
-                    if not self.is_touch_held:
-                        elapsed = now - self.touch_start_time
-                        if elapsed >= self.min_touch_duration:
+                    if not self.is_touch_held and self.last_touch_release_time > 0:
+                        if (now - self.last_touch_release_time) >= self.touch_release_delay:
                             self.state = "IDLE"
                             self.last_activity_time = now
-                            self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
-                            self.last_log = "TACTIL: Fin interacción (2s+)"
+                            self.video.pause()
+                            self.video.load_video("idle.mp4", loop=self.repeat_event_mode, preserve_position=True)
+                            self.last_log = "TACTIL: Fin interacción"
 
             # =================================================================
             # ESTADO 3: VISOR DE IMAGEN EN ZONA SEGURA
