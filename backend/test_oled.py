@@ -29,11 +29,46 @@ try:
 except Exception as e:
     print(f"ℹ️ Placa de expansión opcional no detectada: {e}")
 
+# Escaneo I2C detallado para diagnóstico rápido
+print("\n🔍 Escaneando bus I2C...")
+detected_devices = {}
+try:
+    import smbus
+except ImportError:
+    try:
+        import smbus2 as smbus
+    except ImportError:
+        smbus = None
+
+if smbus is not None:
+    for b in [1, 0]:
+        try:
+            bus_obj = smbus.SMBus(b)
+            detected_devices[b] = []
+            for a in range(0x03, 0x78):
+                try:
+                    bus_obj.read_byte(a)
+                    detected_devices[b].append(hex(a))
+                except Exception:
+                    pass
+            bus_obj.close()
+        except Exception as e_bus:
+            pass
+
+    for b, addrs in detected_devices.items():
+        if addrs:
+            print(f"   📡 Dispositivos I2C detectados en Bus {b}: {', '.join(addrs)}")
+        else:
+            print(f"   ⚠️ Bus {b} disponible pero sin dispositivos I2C detectados.")
+else:
+    print("   ⚠️ Módulo smbus / smbus2 no disponible para escaneo preliminar.")
+
 # Rotación según placa (FNK0107 requiere 180°, FNK0100 requiere 0°)
 rot = 180 if board_type == "FNK0107" else 0
-print(f"🖥️ Inicializando OLED en Bus 1, Dirección 0x3C, Rotación {rot}°...")
+print(f"\n🖥️ Inicializando OLED (Rotación por defecto {rot}°)...")
 
 oled = None
+last_errors = []
 for bus in [1, 0]:
     for addr in [0x3C, 0x3D]:
         for r in [rot, 0 if rot == 180 else 180]:
@@ -41,10 +76,13 @@ for bus in [1, 0]:
                 candidate = OLED(bus_number=bus, i2c_address=addr, rotate_angle=r)
                 if candidate.device is not None:
                     oled = candidate
-                    print(f"🎉 ¡Éxito! Pantalla OLED detectada en Bus {bus}, Dirección {hex(addr)}, Rotación {r}°.")
+                    print(f"🎉 ¡Éxito! Pantalla OLED inicializada en Bus {bus}, Dirección {hex(addr)}, Rotación {r}° (Driver: {candidate.device.__class__.__name__}).")
                     break
-            except Exception:
-                continue
+                else:
+                    if candidate.init_error:
+                        last_errors.append(f"Bus {bus}, Addr {hex(addr)}: {candidate.init_error}")
+            except Exception as e:
+                last_errors.append(f"Bus {bus}, Addr {hex(addr)}: {e}")
         if oled:
             break
     if oled:
@@ -52,10 +90,14 @@ for bus in [1, 0]:
 
 if not oled or not oled.device:
     print("\n❌ No se pudo inicializar la pantalla OLED.")
-    print("Verifica:")
+    if last_errors:
+        print("Detalle de intentos:")
+        for err in set(last_errors):
+            print(f" - {err}")
+    print("\nVerifica en la Raspberry Pi:")
     print(" 1. Habilitar I2C: sudo raspi-config -> Interface Options -> I2C -> Yes")
     print(" 2. Ejecutar: i2cdetect -y 1 (debe verse '3c' y '21')")
-    print(" 3. Conexiones: GND, 3V3, SDA (GPIO 2), SCL (GPIO 3)")
+    print(" 3. Conexiones físicas: VCC/3V3, GND, SDA (GPIO 2 - Pin 3), SCL (GPIO 3 - Pin 5)")
     sys.exit(1)
 
 sys_info = SystemInformation()

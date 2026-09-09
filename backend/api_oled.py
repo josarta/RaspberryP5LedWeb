@@ -5,11 +5,93 @@ try:
 except Exception:
     HAS_LUMA = False
 
+try:
+    import smbus
+except ImportError:
+    try:
+        import smbus2 as smbus
+    except ImportError:
+        smbus = None
+
 from PIL import Image, ImageDraw, ImageFont, ImageSequence
 import time
 import os
 import shutil
 import math
+
+class SMBusSSD1306Device:
+    """Controlador nativo SSD1306 por SMBus/I2C directo para Raspberry Pi (cero dependencias externas)."""
+    def __init__(self, bus_number=1, address=0x3C, width=128, height=64, rotate=0):
+        self.bus_number = bus_number
+        self.address = address
+        self.width = width
+        self.height = height
+        self.rotate = rotate
+        self.bus = None
+        if smbus is not None:
+            self.bus = smbus.SMBus(bus_number)
+            self._init_display()
+
+    def _command(self, *cmds):
+        if not self.bus:
+            return
+        for c in cmds:
+            try:
+                self.bus.write_byte_data(self.address, 0x00, c)
+            except Exception:
+                pass
+
+    def _init_display(self):
+        # Secuencia estándar de inicialización SSD1306
+        self._command(
+            0xAE,        # Display OFF
+            0xD5, 0x80,  # Set Display Clock Divide
+            0xA8, 0x3F,  # Set Multiplex Ratio 1/64
+            0xD3, 0x00,  # Set Display Offset
+            0x40,        # Set Display Start Line 0
+            0x8D, 0x14,  # Enable Charge Pump
+            0x20, 0x00,  # Memory Addressing: Horizontal Mode
+            0xA1 if self.rotate in [0, 1] else 0xA0, # Segment Re-map
+            0xC8 if self.rotate in [0, 1] else 0xC0, # COM Scan Direction
+            0xDA, 0x12,  # Set COM Pins Hardware Configuration
+            0x81, 0xCF,  # Set Contrast Control
+            0xD9, 0xF1,  # Set Pre-Charge Period
+            0xDB, 0x40,  # Set VCOMH Deselect Level
+            0xA4,        # Entire Display ON Resume
+            0xA6,        # Normal Display
+            0xAF         # Display ON
+        )
+
+    def display(self, image):
+        if not self.bus:
+            return
+        if self.rotate == 1:
+            image = image.rotate(90, expand=False)
+        elif self.rotate == 2:
+            image = image.rotate(180, expand=False)
+        elif self.rotate == 3:
+            image = image.rotate(270, expand=False)
+
+        img = image.convert('1')
+        pixels = img.load()
+        w, h = img.size
+
+        buf = bytearray(w * (h // 8))
+        for y in range(h):
+            page = y // 8
+            bit = 1 << (y % 8)
+            for x in range(w):
+                if pixels[x, y]:
+                    buf[x + page * w] |= bit
+
+        self._command(0x21, 0, 127)
+        self._command(0x22, 0, 7)
+
+        for i in range(0, len(buf), 32):
+            try:
+                self.bus.write_i2c_block_data(self.address, 0x40, list(buf[i:i+32]))
+            except Exception:
+                pass
 
 class OLED:
     def __init__(self, bus_number=1, i2c_address=0x3C, rotate_angle=0):
@@ -29,6 +111,7 @@ class OLED:
         self.height = 64
         self.default_font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf" 
         self.default_font_size = 16
+        self.init_error = None
         try:
             self.font = ImageFont.load_default()
         except Exception:
@@ -39,11 +122,24 @@ class OLED:
             try:
                 self.serial = i2c(port=self.bus_number, address=self.i2c_address)
                 self.device = ssd1306(self.serial, rotate=self.rotate_angle)
-            except Exception:
+            except Exception as e1:
                 try:
                     self.device = sh1106(self.serial, rotate=self.rotate_angle)
-                except Exception:
+                except Exception as e2:
+                    self.init_error = f"Luma: {e1}"
                     self.device = None
+        else:
+            self.init_error = "Luma no instalada"
+
+        if self.device is None and smbus is not None:
+            try:
+                smb_dev = SMBusSSD1306Device(bus_number=self.bus_number, address=self.i2c_address, rotate=self.rotate_angle)
+                if smb_dev.bus is not None:
+                    smb_dev.bus.read_byte(self.i2c_address)
+                    self.device = smb_dev
+                    self.init_error = None
+            except Exception as e_smb:
+                self.init_error = f"{self.init_error} | SMBus: {e_smb}"
 
         self._create_buffer()
 

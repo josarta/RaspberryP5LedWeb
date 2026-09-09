@@ -294,6 +294,25 @@ class Expansion:
         else:
             self.board_type = "FNK0108"
     def _map_controller_function(self):
+        if not self.case_controller:
+            self.get_temp = lambda: 0
+            self.set_power_on_check = lambda s: None
+            self.set_led_color = lambda *a: None
+            self.set_all_led_color = lambda *a: None
+            self.set_led_mode = lambda *a: None
+            self.get_led_color = lambda *a: [0, 0, 0]
+            self.get_all_led_color = lambda: [0, 0, 0]
+            self.get_led_mode = lambda: 0
+            self.set_fan_mode = lambda *a: None
+            self.set_fan_frequency = lambda *a: None
+            self.set_fan_duty = lambda *a: None
+            self.set_fan_temp_mode_threshold = lambda *a: None
+            self.get_fan_mode = lambda: 0
+            self.get_fan_frequency = lambda: 0
+            self.get_fan_duty = lambda: 0
+            self.get_fan_threshold = lambda: [0, 0, 0]
+            return
+
         self.get_temp = self.case_controller.get_temp
         self.set_power_on_check = self.case_controller.set_power_on_check
 
