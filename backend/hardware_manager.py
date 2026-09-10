@@ -62,9 +62,11 @@ class HardwareManager:
         except Exception:
             self.sys_info = None
 
-        self._init_gpio()
-        self._init_expansion()
+        # Inicializar hardware en el orden exacto probado (OLED primero, luego Expansión y GPIO)
         self._init_oled()
+        time.sleep(0.1)
+        self._init_expansion()
+        self._init_gpio()
 
     def _init_gpio(self):
         if not HAS_GPIO:
@@ -107,7 +109,7 @@ class HardwareManager:
             return True
 
         now = time.time()
-        if now - self.last_oled_probe_time < 2.0:
+        if now - self.last_oled_probe_time < 5.0:
             return False
         self.last_oled_probe_time = now
 
@@ -118,7 +120,10 @@ class HardwareManager:
                 print("🟢 [HW] Pantalla OLED SSD1306 física conectada con éxito.")
                 self._render_splash_screen()
                 return True
+            else:
+                self.oled = None
         except Exception as e:
+            self.oled = None
             print(f"❌ [HW OLED Error]: {e}")
 
         return False
