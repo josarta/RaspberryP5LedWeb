@@ -33,6 +33,8 @@ class NativeVideoPlayer:
         self.audio_enabled = True
         self.volume = 0.6
 
+        self.video_positions = {}
+
     def _ensure_audio_extracted(self, video_path):
         """Extrae la pista de audio del video en segundo plano o sincrónicamente a audio_cache."""
         base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -45,7 +47,7 @@ class NativeVideoPlayer:
                 pass
         return audio_path if os.path.exists(audio_path) else None
 
-    def load_video(self, filename, loop=False):
+    def load_video(self, filename, loop=False, preserve_position=False):
         path = os.path.join(self.videos_dir, filename)
         if not os.path.exists(path):
             if os.path.exists(filename):
@@ -54,7 +56,24 @@ class NativeVideoPlayer:
                 self.stop()
                 return False
 
-        if self.cap:
+        # Si ya es el archivo cargado y está abierto, reanudar de inmediato sin reabrir
+        if self.current_file == filename and self.cap is not None and self.cap.isOpened():
+            self.is_looping = loop
+            self.is_playing = True
+            self.last_frame_time = time.time()
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.unpause()
+                except Exception:
+                    pass
+            return True
+
+        # Guardar posición del frame actual antes de cambiar de video
+        if self.cap and self.current_file:
+            try:
+                self.video_positions[self.current_file] = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            except Exception:
+                pass
             self.cap.release()
 
         self.cap = cv2.VideoCapture(path)
@@ -62,6 +81,15 @@ class NativeVideoPlayer:
             self.cap = None
             self.is_playing = False
             return False
+
+        # Restaurar posición si se solicita
+        saved_frame = self.video_positions.get(filename, 0) if preserve_position else 0
+        total_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if saved_frame > 0 and total_frames > 0 and saved_frame < total_frames - 5:
+            try:
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, saved_frame)
+            except Exception:
+                saved_frame = 0
 
         self.current_file = filename
         self.is_looping = loop
@@ -76,10 +104,36 @@ class NativeVideoPlayer:
             try:
                 pygame.mixer.music.load(audio_file)
                 pygame.mixer.music.set_volume(self.volume if self.audio_enabled else 0.0)
-                pygame.mixer.music.play(loops=-1 if loop else 0)
+                start_sec = (saved_frame / self.fps) if (preserve_position and saved_frame > 0 and self.fps > 0) else 0.0
+                pygame.mixer.music.play(loops=-1 if loop else 0, start=start_sec)
+            except Exception:
+                try:
+                    pygame.mixer.music.play(loops=-1 if loop else 0)
+                except Exception:
+                    pass
+        return True
+
+    def pause(self):
+        self.is_playing = False
+        if self.cap and self.current_file:
+            try:
+                self.video_positions[self.current_file] = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
             except Exception:
                 pass
-        return True
+        if pygame.mixer.get_init():
+            try:
+                pygame.mixer.music.pause()
+            except Exception:
+                pass
+
+    def resume(self):
+        if self.cap and self.cap.isOpened():
+            self.is_playing = True
+            if pygame.mixer.get_init():
+                try:
+                    pygame.mixer.music.unpause()
+                except Exception:
+                    pass
 
     def set_loop(self, loop: bool):
         self.is_looping = bool(loop)
@@ -183,14 +237,18 @@ class NativeDisplayApp:
         self.current_image = None
         self.current_image_caption = ""
         self.image_end_time = 0
+        self._font_cache = {}
 
-        # Control de interacción táctil reactiva (bebe.mp4)
+        # Control de interacción táctil reactiva y continua (bebe.mp4)
         self.is_touch_held = False
         self.touch_start_time = 0.0
-        self.min_touch_duration = 2.0  # Mínimo 2 segundos de reproducción
-        self.pre_touch_state = "IDLE"
-        self.pre_touch_video = "idle.mp4"
-        self.pre_touch_loop = False
+        self.last_touch_release_time = 0.0
+        self.touch_release_delay = 0.6  # Margen de 0.6s tras soltar para toques consecutivos fluidos
+
+        # Control de estado de inactividad (InactividadDurmiendo.mp4)
+        self.inactivity_timeout = 25.0  # 25 segundos sin actividad para entrar en modo reposo
+        self.last_activity_time = time.time()
+        self.sleep_video = "InactividadDurmiendo.mp4"
 
         # Sub-motor de video con audio integrado
         self.video = NativeVideoPlayer(self.videos_dir, self.audio_cache_dir)
@@ -205,21 +263,53 @@ class NativeDisplayApp:
                 except Exception:
                     pass
 
+    def reset_activity(self):
+        """Reinicia el reloj de inactividad y despierta el dispositivo si estaba durmiendo."""
+        self.last_activity_time = time.time()
+        if self.state == "SLEEPING":
+            self.state = "IDLE"
+            self.video.load_video("idle.mp4", loop=self.repeat_event_mode, preserve_position=True)
+            self.last_log = "Sistema Activo (Despierto)"
+
+    def trigger_wake_up(self):
+        """Fuerza despertar desde la API o WebSockets."""
+        self.event_queue.put(("WAKE_UP", None))
+
+    def _get_font(self, font_name: str, size: int, bold: bool = True):
+        """Devuelve una fuente cacheada de forma segura sin fugas de descriptores de archivo."""
+        key = (font_name, size, bold)
+        if key not in self._font_cache:
+            font_obj = None
+            try:
+                font_obj = pygame.font.SysFont(font_name, size, bold=bold)
+            except Exception:
+                font_obj = None
+            if font_obj is None:
+                try:
+                    font_obj = pygame.font.Font(None, size)
+                except Exception:
+                    font_obj = pygame.font.SysFont(None, size)
+            self._font_cache[key] = font_obj
+        return self._font_cache[key]
+
     def handle_touch_press(self):
-        """Maneja el inicio de un toque/clic en la pantalla: reproduce bebe.mp4 de inmediato."""
+        """Maneja el inicio de un toque/clic en la pantalla: reproduce o continúa bebe.mp4 de inmediato."""
+        self.reset_activity()
         self.is_touch_held = True
+        self.last_touch_release_time = 0.0
         if self.state != "TOUCH_INTERACTION":
-            self.pre_touch_state = self.state if self.state != "TOUCH_INTERACTION" else "IDLE"
-            self.pre_touch_video = self.video.current_file or "idle.mp4"
-            self.pre_touch_loop = self.video.is_looping
             self.state = "TOUCH_INTERACTION"
             self.touch_start_time = time.time()
             self.last_log = "TACTIL: Video Bebe Activo"
-            self.video.load_video("bebe.mp4", loop=True)
+            self.video.load_video("bebe.mp4", loop=True, preserve_position=True)
+        else:
+            self.video.resume()
 
     def handle_touch_release(self):
         """Maneja la liberación del toque/clic en la pantalla."""
+        self.reset_activity()
         self.is_touch_held = False
+        self.last_touch_release_time = time.time()
 
     def trigger_touch_down(self):
         self.event_queue.put(("TOUCH_DOWN", None))
@@ -315,14 +405,14 @@ class NativeDisplayApp:
             now = time.time()
             current_w, current_h = screen.get_size()
 
-            # Cálculo de fuentes tipográficas dinámicas adaptativas a la resolución
+            # Obtención de fuentes tipográficas cacheadas (sin re-instanciación por frame)
             font_size_title = max(18, min(32, int(current_h * 0.045)))
             font_size_main = max(12, min(20, int(current_h * 0.030)))
             font_size_hud = max(11, min(16, int(current_h * 0.026)))
 
-            font_title = pygame.font.SysFont("consolas", font_size_title, bold=True)
-            font_main = pygame.font.SysFont("consolas", font_size_main, bold=True)
-            font_hud = pygame.font.SysFont("consolas", font_size_hud, bold=True)
+            font_title = self._get_font("consolas", font_size_title, bold=True)
+            font_main = self._get_font("consolas", font_size_main, bold=True)
+            font_hud = self._get_font("consolas", font_size_hud, bold=True)
 
             # Cálculo de la zona segura central maximizada (barras superiores/inferiores compactas)
             margin_x = max(10, int(current_w * 0.015))
@@ -340,6 +430,8 @@ class NativeDisplayApp:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.is_running = False
+                elif event.type == pygame.MOUSEMOTION:
+                    self.reset_activity()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
                         self.handle_touch_press()
@@ -351,6 +443,7 @@ class NativeDisplayApp:
                 elif event.type == pygame.FINGERUP:
                     self.handle_touch_release()
                 elif event.type == pygame.KEYDOWN:
+                    self.reset_activity()
                     if event.key in [pygame.K_ESCAPE, pygame.K_q]:
                         self.is_running = False
                     elif event.key in [pygame.K_f, pygame.K_F11]:
@@ -399,6 +492,9 @@ class NativeDisplayApp:
                         if "last_log" in ev_data:
                             self.last_log = ev_data["last_log"]
 
+                    elif ev_type == "WAKE_UP":
+                        self.reset_activity()
+
                     elif ev_type == "TOUCH_DOWN":
                         self.handle_touch_press()
 
@@ -406,18 +502,21 @@ class NativeDisplayApp:
                         self.handle_touch_release()
 
                     elif ev_type == "PLAY_LED_ON":
+                        self.reset_activity()
                         pin = ev_data
                         self.state = "PLAYING_EVENT"
                         self.last_log = f"LED ON (Pin {pin})" if pin else "ALL LEDS ON"
                         self.video.load_video("led_on.mp4", loop=self.repeat_event_mode)
 
                     elif ev_type == "PLAY_LED_OFF":
+                        self.reset_activity()
                         pin = ev_data
                         self.state = "PLAYING_EVENT"
                         self.last_log = f"LED OFF (Pin {pin})" if pin else "ALL LEDS OFF"
                         self.video.load_video("led_off.mp4", loop=self.repeat_event_mode)
 
                     elif ev_type == "SHOW_IMAGE":
+                        self.reset_activity()
                         fname, cap, dur = ev_data
                         img_path = os.path.join(self.images_dir, fname) if not os.path.exists(fname) else fname
                         if os.path.exists(img_path):
@@ -431,16 +530,19 @@ class NativeDisplayApp:
                                 pass
 
                     elif ev_type == "SHOW_VIDEO":
+                        self.reset_activity()
                         fname, loop = ev_data
                         self.state = "PLAYING_EVENT"
                         self.video.load_video(fname, loop=loop)
 
                     elif ev_type == "SET_VOLUME":
+                        self.reset_activity()
                         self.volume = max(0.0, min(1.0, float(ev_data)))
                         self.video.set_volume(self.volume)
                         self.last_log = f"Volumen: {int(self.volume * 100)}%"
 
                     elif ev_type == "SET_AUDIO_ENABLED":
+                        self.reset_activity()
                         self.audio_enabled = bool(ev_data)
                         self.video.set_audio_enabled(self.audio_enabled)
 
@@ -484,6 +586,7 @@ class NativeDisplayApp:
                     loader_pct = 100.0
                     if now - loader_step_timer > 0.7:
                         self.state = "IDLE"
+                        self.last_activity_time = now
                         self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
 
                 bar_w, bar_h = min(600, int(current_w * 0.75)), 14
@@ -501,13 +604,27 @@ class NativeDisplayApp:
                 screen.blit(status_txt, (cx - status_txt.get_width() // 2, bar_y + 24))
 
             # =================================================================
-            # ESTADO 2: VIDEO O CANVAS INTERACTIVO (IDLE / EVENTO / TACTIL)
+            # ESTADO 2: VIDEO O CANVAS INTERACTIVO (IDLE / EVENTO / TACTIL / REPOSO)
             # =================================================================
-            elif self.state in ["IDLE", "PLAYING_EVENT", "TOUCH_INTERACTION"]:
+            elif self.state in ["IDLE", "PLAYING_EVENT", "TOUCH_INTERACTION", "SLEEPING"]:
+                # Transición automática a reposo por inactividad
+                if self.state == "IDLE":
+                    if (now - self.last_activity_time) >= self.inactivity_timeout:
+                        self.state = "SLEEPING"
+                        self.last_log = "Inactividad: Durmiendo..."
+                        self.video.load_video(self.sleep_video, loop=True)
+
+                # Transición de retorno cuando finaliza un video de evento
+                elif self.state == "PLAYING_EVENT":
+                    if not self.video.is_playing and not self.repeat_event_mode:
+                        self.state = "IDLE"
+                        self.last_activity_time = now
+                        self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
+
+                # Renderizar frame de video centrado en el área segura
                 frame_surf = self.video.get_next_frame_surface((safe_w, safe_h))
                 if frame_surf:
                     fw, fh = frame_surf.get_size()
-                    # Centrado uniforme perfecto en el área segura libre
                     pos_x = (current_w - fw) // 2
                     pos_y = safe_top + (safe_h - fh) // 2
                     screen.blit(frame_surf, (pos_x, pos_y))
@@ -526,15 +643,15 @@ class NativeDisplayApp:
                             if is_active:
                                 pygame.draw.circle(screen, C_CYAN, (nx, ny), 22, 3)
 
-                # Control temporal de la interacción táctil (bebe.mp4)
+                # Control reactivo y continuo de la interacción táctil (bebe.mp4)
                 if self.state == "TOUCH_INTERACTION":
-                    if not self.is_touch_held:
-                        elapsed = now - self.touch_start_time
-                        if elapsed >= self.min_touch_duration:
-                            # Fin de la interacción: restaurar video y estado previo
-                            self.state = self.pre_touch_state if self.pre_touch_state != "TOUCH_INTERACTION" else "IDLE"
-                            self.video.load_video(self.pre_touch_video or "idle.mp4", loop=self.pre_touch_loop)
-                            self.last_log = "TACTIL: Fin interacción (2s+)"
+                    if not self.is_touch_held and self.last_touch_release_time > 0:
+                        if (now - self.last_touch_release_time) >= self.touch_release_delay:
+                            self.state = "IDLE"
+                            self.last_activity_time = now
+                            self.video.pause()
+                            self.video.load_video("idle.mp4", loop=self.repeat_event_mode, preserve_position=True)
+                            self.last_log = "TACTIL: Fin interacción"
 
             # =================================================================
             # ESTADO 3: VISOR DE IMAGEN EN ZONA SEGURA
@@ -555,6 +672,7 @@ class NativeDisplayApp:
 
                 if self.image_end_time > 0 and now > self.image_end_time:
                     self.state = "IDLE"
+                    self.last_activity_time = now
                     self.video.load_video("idle.mp4", loop=self.repeat_event_mode)
 
             # =================================================================
@@ -568,7 +686,8 @@ class NativeDisplayApp:
                 # Lado izquierdo: Indicador de estado y Título
                 dot_x = margin_x + 14
                 dot_y = hdr_y + hdr_h // 2
-                pygame.draw.circle(screen, C_GREEN, (dot_x, dot_y), 6)
+                dot_color = C_YELLOW if self.state == "SLEEPING" else C_GREEN
+                pygame.draw.circle(screen, dot_color, (dot_x, dot_y), 6)
 
                 title_text = "RPI 5 KIOSK" if current_w < 900 else "RPI 5 BREAKOUT KIOSK"
                 title_surf = font_hud.render(title_text, True, C_WHITE)
@@ -587,6 +706,9 @@ class NativeDisplayApp:
                 if self.state == "TOUCH_INTERACTION":
                     mode_label = "BEBE"
                     loop_badge = "[HOLD]"
+                elif self.state == "SLEEPING":
+                    mode_label = "DURMIENDO"
+                    loop_badge = "[REPOSO zZz]"
                 elif self.state == "PLAYING_EVENT":
                     mode_label = "EVENT"
                     loop_badge = "[LOOP]" if self.repeat_event_mode else "[1-SHOT]"
@@ -595,7 +717,7 @@ class NativeDisplayApp:
                     loop_badge = "[LOOP]" if self.repeat_event_mode else "[1-SHOT]"
 
                 mode_str = f"{mode_label} {loop_badge}"
-                mode_surf = font_hud.render(mode_str, True, C_CYAN)
+                mode_surf = font_hud.render(mode_str, True, C_YELLOW if self.state == "SLEEPING" else C_CYAN)
 
                 right_cursor_x = current_w - margin_x - 14
 
