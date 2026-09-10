@@ -23,7 +23,10 @@ class OLED:
                 self.serial = i2c(port=self.bus_number, address=self.i2c_address)
                 self.device = ssd1306(self.serial)
             except Exception as e:
+                print(f"❌ [OLED Init Error]: {type(e).__name__} -> {e}")
                 self.device = None
+        else:
+            print("❌ [OLED Error]: Módulo luma.oled no disponible.")
 
         width = self.device.width if self.device else 128
         height = self.device.height if self.device else 64
@@ -46,15 +49,10 @@ class OLED:
 
     def show(self):
         # Display the content in the buffer on the OLED screen
-        if self.device:
-            try:
-                self.device.display(self.buffer)
-            except Exception:
-                pass
-
-    def show(self):
-        # Display the content in the buffer on the OLED screen
-        self.device.display(self.buffer)
+        if self.device is not None:
+            self.device.display(self.buffer)
+        else:
+            raise RuntimeError("Dispositivo OLED no inicializado (device is None)")
 
     def close(self):
         # Close the I2C bus
