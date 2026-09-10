@@ -102,52 +102,42 @@ class HardwareManager:
             self.board_type = "FNK0100"
 
     def _init_oled(self) -> bool:
-        """Inicializa la pantalla OLED SSD1306/SH1106 usando el driver oficial Freenove."""
+        """Inicializa la pantalla OLED SSD1306 usando la clase OLED oficial."""
         if self.is_oled_available and self.oled is not None and self.oled.device is not None:
             return True
 
         now = time.time()
-        if now - self.last_oled_probe_time < 3.0:
+        if now - self.last_oled_probe_time < 2.0:
             return False
         self.last_oled_probe_time = now
 
-        # Determinación de ángulo según tipo de placa Freenove
-        default_rot = 180 if self.board_type == "FNK0107" else 0
-        rotations = [default_rot, 0 if default_rot == 180 else 180]
-
-        for bus in [1, 0]:
-            for addr in [0x3C, 0x3D]:
-                for rot in rotations:
-                    try:
-                        oled_instance = OLED(bus_number=bus, i2c_address=addr, rotate_angle=rot)
-                        if oled_instance.device is not None:
-                            self.oled = oled_instance
-                            self.is_oled_available = True
-                            print(f"🟢 [HW] Pantalla OLED SSD1306 física conectada en Bus {bus}, Dirección {hex(addr)}, Rotación {rot}°.")
-                            
-                            # Renderizar pantalla inicial de bienvenida
-                            self._render_splash_screen()
-                            return True
-                    except Exception:
-                        continue
+        try:
+            self.oled = OLED()
+            if self.oled.device is not None:
+                self.is_oled_available = True
+                print("🟢 [HW] Pantalla OLED SSD1306 física conectada con éxito.")
+                self._render_splash_screen()
+                return True
+        except Exception as e:
+            print(f"❌ [HW OLED Error]: {e}")
 
         return False
 
     def _render_splash_screen(self):
         """Dibuja una pantalla de arranque limpia en el OLED."""
-        if not self.oled:
+        if not self.oled or self.oled.device is None:
             return
         try:
             self.oled.clear()
             self.oled.draw_rectangle((0, 0, 127, 63), outline="white")
-            self.oled.draw_text("RASPBERRY PI 5", position=((0, 4), (128, 18)), directory="center", font_size=12)
-            self.oled.draw_line(((0, 20), (127, 20)), fill="white")
-            self.oled.draw_text("IoT 3D Twin Ready", position=((0, 24), (128, 38)), directory="center", font_size=11)
+            self.oled.draw_text("RASPBERRY PI 5", position=(14, 8))
+            self.oled.draw_line((0, 24, 127, 24), fill="white")
+            self.oled.draw_text("IoT 3D Twin Ready", position=(10, 30))
             ip_str = self._get_ip_address()
-            self.oled.draw_text(f"IP: {ip_str}", position=((0, 44), (128, 58)), directory="center", font_size=11)
+            self.oled.draw_text(f"IP:{ip_str}", position=(6, 46))
             self.oled.show()
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"❌ [HW Splash Error]: {e}")
 
     def toggle_led(self, pin: int, forced_state: bool = None) -> bool:
         pin_str = str(pin)
@@ -275,23 +265,24 @@ class HardwareManager:
             self.oled.draw_rectangle((0, 0, 127, 63), outline="white")
             
             # Fila 1: IP
-            self.oled.draw_text(f"IP: {ip_str}", position=((2, 2), (125, 14)), directory="left", font_size=10)
-            self.oled.draw_line(((0, 16), (127, 16)), fill="white")
+            self.oled.draw_text(f"IP:{ip_str}", position=(4, 3))
+            self.oled.draw_line((0, 17, 127, 17), fill="white")
 
             # Fila 2: GPIOs activos
-            self.oled.draw_text(f"LEDs: {active_count:02d}/28  {active_preview}", position=((2, 18), (125, 30)), directory="left", font_size=10)
-            self.oled.draw_line(((0, 32), (127, 32)), fill="white")
+            self.oled.draw_text(f"LED:{active_count:02d}/28 {active_preview[:12]}", position=(4, 19))
+            self.oled.draw_line((0, 33, 127, 33), fill="white")
 
             # Fila 3: Métricas (CPU, Temp, RAM)
-            self.oled.draw_text(f"CPU:{cpu:.0f}% T:{temp:.0f}C RAM:{ram:.0f}%", position=((2, 34), (125, 46)), directory="left", font_size=10)
-            self.oled.draw_line(((0, 48), (127, 48)), fill="white")
+            self.oled.draw_text(f"C:{cpu:.0f}% T:{temp:.0f}C R:{ram:.0f}%", position=(4, 35))
+            self.oled.draw_line((0, 49, 127, 49), fill="white")
 
             # Fila 4: Último Evento / Log
-            log_str = self.last_log[:22]
-            self.oled.draw_text(log_str, position=((2, 50), (125, 62)), directory="left", font_size=10)
+            log_str = self.last_log[:18]
+            self.oled.draw_text(log_str, position=(4, 51))
 
             self.oled.show()
         except Exception as e:
+            print(f"❌ [HW update_oled error]: {e}")
             self.is_oled_available = False
 
     def get_full_state(self) -> dict:
